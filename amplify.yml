@@ -1,0 +1,18 @@
+version: 1
+frontend:
+  phases:
+    preBuild:
+      commands:
+        - cd map && npm ci
+    build:
+      commands:
+        - cd map && npm run build
+  artifacts:
+    # publish the built Vite output, not the raw source (bare ES imports don't
+    # resolve in a browser). baseDirectory is relative to the repo root.
+    baseDirectory: map/dist
+    files:
+      - '**/*'
+  cache:
+    paths:
+      - map/node_modules/**/*
