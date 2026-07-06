@@ -1,0 +1,15 @@
+# data caches — all re-downloadable from public sources (see README)
+data/raw/
+data/backfill.log
+
+# python
+pipeline/.venv/
+__pycache__/
+.pytest_cache/
+
+# node
+map/node_modules/
+map/dist/
+
+# misc
+.DS_Store

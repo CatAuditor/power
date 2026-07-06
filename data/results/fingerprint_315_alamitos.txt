@@ -1,0 +1,53 @@
+facility: AES Alamitos | units: ['3', '4', '5', 'CT1', 'CT2']
+bids: 871,245 seq-hours across 92 days, 1407 seqs
+
+=== unit 3: pmax(CEMS)=0 MW, run hours=0, run days=0/92
+unit never ran in window — fingerprint impossible for this unit
+
+=== unit 4: pmax(CEMS)=170 MW, run hours=38, run days=3/92
+capacity band candidates: 198 of 1407 seqs
+   seq  max_mw  cap_ratio  active_hours  run_hour_coverage  run_day_coverage  selfsched_days  clear_day_jaccard  runday_price_delta
+117281  139.00   0.817647           104              0.289               1.0               0              0.167                1.00
+213199  198.03   1.164882           100              0.316               1.0               0              0.091               -4.10
+188521  100.10   0.588824           131              0.053               1.0               0              0.071               -3.46
+495058  100.10   0.588824           132              0.053               1.0               0              0.067               -3.51
+321874  202.70   1.192353            99              0.053               1.0               0              0.055               -4.59
+120025  204.20   1.201176           104              0.053               1.0               0              0.054               -4.17
+722938  204.29   1.201706           101              0.053               1.0               0              0.053               -4.62
+181656  125.00   0.735294           838              0.921               1.0               0              0.052             -170.40
+
+=== unit 5: pmax(CEMS)=430 MW, run hours=12, run days=2/92
+capacity band candidates: 44 of 1407 seqs
+   seq  max_mw  cap_ratio  active_hours  run_hour_coverage  run_day_coverage  selfsched_days  clear_day_jaccard  runday_price_delta
+213626  274.31   0.637930           118              0.167               1.0               0              0.056               -2.69
+144983  248.00   0.576744            92              0.167               1.0               0              0.050                1.01
+348686  275.00   0.639535            59              0.167               1.0               0              0.034                0.00
+129696  302.00   0.702326          1331              1.000               1.0               0              0.029               -2.25
+658374  302.58   0.703674          1272              0.917               1.0               0              0.029                0.00
+160605  407.00   0.946512            78              0.167               1.0               0              0.029                0.51
+944410  407.00   0.946512            77              0.167               1.0               0              0.028                0.51
+879947  404.00   0.939535            78              0.167               1.0               0              0.027                0.51
+
+=== unit CT1: pmax(CEMS)=346 MW, run hours=926, run days=79/92
+capacity band candidates: 70 of 1407 seqs
+   seq  max_mw  cap_ratio  active_hours  run_hour_coverage  run_day_coverage  selfsched_days  clear_day_jaccard  runday_price_delta
+133660  336.04   0.971214          2167              1.000               1.0               0              0.906               -2.52
+158253  275.00   0.794798          2123              1.000               1.0               0              0.886               -1.36
+173802  200.00   0.578035           174              0.153               1.0               0              0.867                0.00
+639090  200.00   0.578035          2208              1.000               1.0               0              0.859               -4.00
+968635  200.00   0.578035          2208              1.000               1.0               0              0.859                0.00
+457081  196.00   0.566474          2087              0.999               1.0               0              0.859                0.00
+153860  269.00   0.777457          2085              0.997               1.0               0              0.859                0.00
+418764  259.00   0.748555          1610              0.956               1.0               0              0.859               -0.93
+
+=== unit CT2: pmax(CEMS)=346 MW, run hours=1017, run days=83/92
+capacity band candidates: 70 of 1407 seqs
+   seq  max_mw  cap_ratio  active_hours  run_hour_coverage  run_day_coverage  selfsched_days  clear_day_jaccard  runday_price_delta
+173802   200.0   0.578035           174              0.153               1.0               0              0.911                0.00
+158253   275.0   0.794798          2123              0.998               1.0               0              0.910                0.40
+639090   200.0   0.578035          2208              1.000               1.0               0              0.902               -1.52
+968635   200.0   0.578035          2208              1.000               1.0               0              0.902                0.00
+457081   196.0   0.566474          2087              0.999               1.0               0              0.902               -1.48
+153860   269.0   0.777457          2085              0.997               1.0               0              0.902                0.00
+418764   259.0   0.748555          1610              0.949               1.0               0              0.902                0.16
+159421   263.0   0.760116          1564              0.947               1.0               0              0.902                0.15
