@@ -1,6 +1,6 @@
 # data caches — all re-downloadable from public sources (see README)
 data/raw/
-data/backfill.log
+data/*.log
 
 # python
 pipeline/.venv/

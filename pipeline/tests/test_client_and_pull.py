@@ -74,3 +74,31 @@ def test_run_up_to_date_noop():
 def test_run_cached_counts_as_progress():
     wm, results = daily_pull.run(date(2025, 9, 30), date(2025, 10, 1), lambda d: "cached")
     assert wm == date(2025, 10, 1)
+
+
+def test_paced_get_retries_transient_network_errors():
+    import requests as rq
+    client = OasisClient(sleep_s=0)
+
+    class FakeResp:
+        status_code = 200
+        content = b"x"
+
+    calls = {"n": 0}
+
+    class FakeSession:
+        def get(self, url, timeout):
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise rq.ConnectionError("read timed out")
+            return FakeResp()
+
+    client._session = FakeSession()
+    import time as _t
+    orig = _t.sleep
+    _t.sleep = lambda s: None  # no real backoff waits in tests
+    try:
+        r = client._paced_get("https://example.invalid/x")
+    finally:
+        _t.sleep = orig
+    assert r.status_code == 200 and calls["n"] == 3

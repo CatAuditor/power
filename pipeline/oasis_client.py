@@ -47,18 +47,28 @@ class OasisClient:
     # ---------- transport ----------
 
     def _paced_get(self, url: str, max_retries: int = 4) -> requests.Response:
+        err: Exception | None = None
+        r = None
         for attempt in range(max_retries):
             wait = self.sleep_s - (time.monotonic() - self._last_request)
             if wait > 0:
                 time.sleep(wait)
-            r = self._session.get(url, timeout=180)
+            try:
+                r = self._session.get(url, timeout=180)
+            except requests.RequestException as e:
+                # transient network failure (read timeout, reset) — retry like a 429
+                err, r = e, None
+                self._last_request = time.monotonic()
+                time.sleep(6.0 * (attempt + 1))
+                continue
             self._last_request = time.monotonic()
             if r.status_code == 200:
                 return r
             # 429 body: "CAISO Acceptable Use Policy Violation. Please retry
             # your request after 5 seconds."
-            backoff = 6.0 * (attempt + 1)
-            time.sleep(backoff)
+            time.sleep(6.0 * (attempt + 1))
+        if r is None:
+            raise err if err else RuntimeError("request failed")
         r.raise_for_status()
         return r  # unreachable when raise_for_status throws; keeps typing happy
 
