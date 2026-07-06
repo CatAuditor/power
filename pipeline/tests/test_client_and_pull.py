@@ -102,3 +102,23 @@ def test_paced_get_retries_transient_network_errors():
     finally:
         _t.sleep = orig
     assert r.status_code == 200 and calls["n"] == 3
+
+
+# ---------- s3_sync ----------
+
+def test_s3_sync_disabled_is_noop(monkeypatch):
+    import s3_sync
+    monkeypatch.delenv("POWER_DATA_BUCKET", raising=False)
+    assert s3_sync.enabled() is False
+    # no bucket -> functions no-op without touching the network
+    assert s3_sync.push() == 0
+    assert s3_sync.pull() == 0
+    assert s3_sync.pull_watermark() is False
+
+
+def test_s3_sync_targets_cover_bulk_paths():
+    import s3_sync
+    names = {t[0] for t in s3_sync.SYNC_TARGETS}
+    assert names == {"bids_dam", "lmp", "cems_targets.parquet", "_watermark.json"}
+    # resource_map.json and plants.json must NOT be synced (they stay in the repo)
+    assert "resource_map.json" not in names

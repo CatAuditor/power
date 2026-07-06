@@ -52,3 +52,7 @@ cd pipeline && uv run pytest tests/ -q
 - EIA-860 Generator file column "RTO/ISO LMP Node Designation" links plants to CAISO
   nodes; OASIS `ATL_RESOURCE` (public, no login) maps resource IDs ↔ pricing nodes.
 - `data/raw/` is a cache (gitignored); every input is re-downloadable from public URLs.
+- Bulk processed data (bid parquet, LMP, CEMS, watermark) is **not in the repo** — it
+  lives in a private S3 bucket. Hydrate locally with
+  `POWER_DATA_BUCKET=power-visual-data-507024406243 python pipeline/s3_sync.py pull`.
+  See [infra/README.md](infra/README.md). `plants.json` and `resource_map.json` stay in git.

@@ -2,6 +2,13 @@
 data/raw/
 data/*.log
 
+# bulk processed data lives in the private S3 bucket, not the repo (see README).
+# Re-hydrate locally with: POWER_DATA_BUCKET=... python pipeline/s3_sync.py pull
+data/processed/bids_dam/
+data/processed/lmp/
+data/processed/cems_targets.parquet
+data/processed/_watermark.json
+
 # python
 pipeline/.venv/
 __pycache__/

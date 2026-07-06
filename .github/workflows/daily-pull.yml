@@ -6,8 +6,9 @@ on:
     - cron: "20 15 * * *"
   workflow_dispatch: {}
 
+# Read-only on the repo: bulk data goes to S3, not git.
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: daily-oasis-pull
@@ -17,6 +18,12 @@ jobs:
   pull:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      # bucket name is not secret; credentials are (encrypted GitHub secrets, never in the repo)
+      POWER_DATA_BUCKET: ${{ vars.POWER_DATA_BUCKET }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: us-west-1
     steps:
       - uses: actions/checkout@v4
 
@@ -25,19 +32,7 @@ jobs:
       - name: Sync pipeline environment
         run: uv sync --project pipeline
 
-      - name: Run incremental pull
+      # daily_pull seeds the watermark from S3, pulls new eligible day(s), and
+      # pushes the new parquet + advanced watermark back to S3. No repo writes.
+      - name: Run incremental pull (S3-backed)
         run: uv run --project pipeline python pipeline/daily_pull.py
-
-      - name: Commit new data
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/processed
-          if git diff --cached --quiet; then
-            echo "no new data"
-          else
-            WM=$(jq -r '.bids_dam' data/processed/_watermark.json)
-            git commit -m "daily pull: bids through ${WM}"
-            git pull --rebase origin main
-            git push
-          fi

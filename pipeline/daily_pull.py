@@ -81,7 +81,13 @@ def main() -> int:
 
     from fetch_bids import pull_day as fetch_pull_day
     from oasis_client import OasisClient
+    import s3_sync
     client = OasisClient()
+
+    # S3 is the authoritative store when configured (e.g. GitHub Actions). Seed the
+    # local watermark from it so a fresh runner continues from the true last day.
+    if s3_sync.enabled():
+        s3_sync.pull_watermark()
 
     watermark = load_watermark()
     target = date.today() - timedelta(days=EMBARGO_DAYS)
@@ -93,6 +99,9 @@ def main() -> int:
     new_wm, results = run(watermark, target, lambda d: fetch_pull_day(client, d), max_days=args.max_days)
     if new_wm > watermark:
         save_watermark(new_wm)
+        # push the newly-reduced parquet + advanced watermark back to S3
+        if s3_sync.enabled():
+            s3_sync.push()
     ok = sum(1 for _, s in results if s in ("ok", "cached"))
     errors = [r for r in results if str(r[1]).startswith("error")]
     print(f"done: {ok} day(s) ingested, watermark {watermark} -> {new_wm}", flush=True)
