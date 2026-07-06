@@ -5,8 +5,10 @@ frontend:
       commands:
         - cd map && npm ci
     build:
+      # Amplify runs all phases in one shell session, so the `cd map` above
+      # persists here — don't cd again (that looks for map/map and fails).
       commands:
-        - cd map && npm run build
+        - npm run build
   artifacts:
     # publish the built Vite output, not the raw source (bare ES imports don't
     # resolve in a browser). baseDirectory is relative to the repo root.
