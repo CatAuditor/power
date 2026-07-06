@@ -1,0 +1,76 @@
+"""Tests for oasis_client empty-report handling and daily_pull watermark logic."""
+
+import io
+import zipfile
+from datetime import date
+
+import pandas as pd
+
+import daily_pull
+from oasis_client import OasisClient, _pacific_utc
+
+
+def _zip_bytes(members: dict[str, bytes]) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for name, content in members.items():
+            z.writestr(name, content)
+    return buf.getvalue()
+
+
+# ---------- oasis_client ----------
+
+def test_extract_csv_returns_dataframe():
+    content = _zip_bytes({"20250701_PUB_BID_DAM_v3.csv": b"A,B\n1,2\n3,4\n"})
+    df = OasisClient.extract_csv(content)
+    assert isinstance(df, pd.DataFrame) and len(df) == 2
+
+
+def test_extract_csv_empty_report_is_none_not_error():
+    # HTTP 200 with only an XML stub = embargoed/no-data (verified live 2026-07-06)
+    stub = b'<?xml version="1.0"?><m:OASISReport xmlns:m="x"><m:MessagePayload/></m:OASISReport>'
+    assert OasisClient.extract_csv(_zip_bytes({"report.xml": stub})) is None
+
+
+def test_extract_csv_non_zip_is_none():
+    assert OasisClient.extract_csv(b"<html>CAISO Acceptable Use Policy Violation</html>") is None
+
+
+def test_pacific_utc_handles_dst():
+    assert _pacific_utc(date(2025, 7, 1)) == "20250701T07:00-0000"   # PDT
+    assert _pacific_utc(date(2025, 1, 15)) == "20250115T08:00-0000"  # PST
+
+
+# ---------- daily_pull ----------
+
+def test_run_advances_watermark_and_stops_on_empty():
+    statuses = {date(2025, 10, 1): "ok", date(2025, 10, 2): "ok", date(2025, 10, 3): "empty"}
+    wm, results = daily_pull.run(date(2025, 9, 30), date(2025, 10, 5), lambda d: statuses[d])
+    assert wm == date(2025, 10, 2)
+    assert [s for _, s in results] == ["ok", "ok", "empty"]
+
+
+def test_run_stops_on_error_without_advancing_past_it():
+    def pull(d):
+        if d == date(2025, 10, 2):
+            raise RuntimeError("boom")
+        return "ok"
+    wm, results = daily_pull.run(date(2025, 9, 30), date(2025, 10, 5), pull)
+    assert wm == date(2025, 10, 1)
+    assert results[-1][1].startswith("error")
+
+
+def test_run_catchup_warning(capsys):
+    wm, _ = daily_pull.run(date(2025, 1, 1), date(2025, 3, 1), lambda d: "ok", max_days=1)
+    assert "WARNING: catch-up span" in capsys.readouterr().out
+    assert wm == date(2025, 1, 2)
+
+
+def test_run_up_to_date_noop():
+    wm, results = daily_pull.run(date(2025, 10, 5), date(2025, 10, 5), lambda d: "ok")
+    assert wm == date(2025, 10, 5) and results == []
+
+
+def test_run_cached_counts_as_progress():
+    wm, results = daily_pull.run(date(2025, 9, 30), date(2025, 10, 1), lambda d: "cached")
+    assert wm == date(2025, 10, 1)

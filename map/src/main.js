@@ -220,7 +220,7 @@ function renderDetail(p) {
     ["First unit online", p.op_year ?? "—"],
     ["Planned retirement", p.retire_year ?? "—"],
     ["CAISO LMP node(s)", p.lmp_nodes.length ? p.lmp_nodes.join(", ") : "—"],
-    ["CAISO resource ID(s)", p.resource_ids.length ? p.resource_ids.join(", ") : "not yet resolved"],
+    ["CAISO resource ID(s)", p.resource_ids.length ? `${p.resource_ids.join(", ")} (${p.res_method} match)` : "not resolved"],
     ["Bid-gap analysis", p.bid_gap ?? "pending (PLAN.md M3)"],
   ];
   $("#detail").innerHTML = `

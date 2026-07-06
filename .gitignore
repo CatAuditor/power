@@ -13,3 +13,4 @@ map/dist/
 
 # misc
 .DS_Store
+data/catchup.log

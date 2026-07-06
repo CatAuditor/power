@@ -87,8 +87,8 @@ def load_capacity_factors() -> pd.DataFrame:
 
 
 def load_atl_resources() -> pd.DataFrame:
-    df = pd.read_csv(RAW / "atl_resource.csv")
-    return df[df["RESOURCE_TYPE"] == "GEN"]["RESOURCE_ID"].str.strip().to_frame()
+    from oasis_client import OasisClient
+    return OasisClient().get_resource_listing(cache_path=RAW / "atl_resource.csv")
 
 
 def coastline_points() -> list[tuple[float, float]]:
@@ -173,17 +173,13 @@ def main():
 
     df["coast_km"] = [dist_to_coast_km(la, lo, coast) for la, lo in zip(df["lat"], df["lon"])]
 
-    # CAISO resource-ID prefix heuristic from the utility-reported LMP node
-    atl_ids = set(atl["RESOURCE_ID"])
-    def resource_ids(nodes):
-        found = set()
-        for n in nodes:
-            base = re.split(r"[ ,;]", str(n))[0].upper()
-            prefix = base.split("_")[0][:6]
-            if len(prefix) >= 4:
-                found |= {r for r in atl_ids if r.startswith(prefix)}
-        return sorted(found)[:12]
-    df["caiso_resource_ids"] = df["lmp_nodes"].apply(resource_ids)
+    # plant -> resource IDs via the cached, confidence-tagged resolution map (M6)
+    import resolve_resources
+    nodes_by_plant = {int(pid): nodes for pid, nodes in zip(df["plant_id"], df["lmp_nodes"]) if nodes}
+    names = dict(zip(df["plant_id"].astype(int), df["name"]))
+    res_map = resolve_resources.load_or_build(nodes_by_plant, atl, names)["plants"]
+    df["caiso_resource_ids"] = [res_map.get(str(int(p)), {}).get("resource_ids", []) for p in df["plant_id"]]
+    df["res_method"] = [res_map.get(str(int(p)), {}).get("method") for p in df["plant_id"]]
 
     df["category"] = df.apply(classify, axis=1)
     df = df.dropna(subset=["lat", "lon"])
@@ -210,6 +206,7 @@ def main():
             "retire_year": None if r["retire_year"] is None or pd.isna(r["retire_year"]) else int(r["retire_year"]),
             "lmp_nodes": r["lmp_nodes"],
             "resource_ids": r["caiso_resource_ids"],
+            "res_method": None if pd.isna(r["res_method"]) else r["res_method"],
             "category": r["category"],
             "bid_gap": None,  # populated by M3/M4 export
         })

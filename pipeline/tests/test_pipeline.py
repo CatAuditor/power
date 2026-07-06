@@ -46,7 +46,10 @@ def test_classify(is_fossil, cf, expected):
 def test_plants_json_output_schema():
     import json
     p = ROOT / "map" / "public" / "plants.json"
-    data = json.loads(p.read_text())
+    # Python's json accepts NaN/Infinity but browsers' JSON.parse does not —
+    # a bare NaN in the file breaks the whole map (caught live 2026-07-06).
+    data = json.loads(p.read_text(),
+                      parse_constant=lambda c: pytest.fail(f"non-JSON constant in plants.json: {c}"))
     assert data["meta"]["count"] == len(data["plants"]) > 700
     required = {"id", "name", "lat", "lon", "mw", "cf", "coast_km", "water", "category"}
     sample = data["plants"][0]

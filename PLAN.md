@@ -169,3 +169,150 @@ aggregate local bid distributions are still computable without de-anonymizing ev
    materially worse) plus a manual sanity check per plant.
 3. The PDF's "existing plant database" — now assumed **rebuilt from EIA-860/923** (M1).
    If a curated internal file exists anyway, it can replace/augment `build_plants.py` input.
+
+---
+
+# OASIS API Client — Hardening Plan (from `caiso-oasis-api-connection-spec.pdf`)
+
+> **Status (2026-07-06): M5–M7 implemented.**
+> M5: `pipeline/oasis_client.py` is the single OASIS access layer (https, 5s pacing,
+> 429 backoff, empty-report→None); `fetch_bids.py`/`fetch_lmp.py`/`build_plants.py`
+> migrated; LMP chunking now 31d via gridstatus (report identity delegated to its
+> maintained config). M6: `resolve_resources.py` → `data/processed/resource_map.json`
+> (methods: 5 manual / 134 exact / 88 prefix; caught a real prefix-heuristic false
+> positive — plant 62116 had matched Utah's HUNTERP_* EIM resources instead of
+> HNTGBH_2_PL1X3). M7: `daily_pull.py` + `_watermark.json` + `.github/workflows/
+> daily-pull.yml` (15:20 UTC daily, auto-commit); historical catch-up Oct 2025→Apr 2026
+> run through the same code path. Tests: 22 passing. One deviation from the plan text
+> below: the Actions workflow does **not** regenerate `plants.json` daily — its inputs
+> (EIA annual files) change yearly, and the meta timestamp would create noise commits;
+> regeneration stays manual until M4 wires bid-gap results into the map.
+
+The spec doc mostly formalizes constraints the pipeline already stumbled into and handled
+ad hoc (rate limiting, 90-day delay, per-report date caps). It also surfaces three real
+gaps: no shared/hardened client (each script hand-rolls requests), identity resolution is
+a same-run heuristic rather than a cached artifact, and there's no incremental daily-pull
+design at all. Findings below are all freshly verified against live OASIS, not re-asserted
+from the spec doc or from last session's notes.
+
+## What's already compliant
+
+- CSV via `resultformat=6` everywhere — matches "CSV is generally easier to work with."
+- `fetch_bids.py` already does one-trading-day-per-request for Public Bid Data and paces
+  requests (currently 5s).
+- No credentials anywhere — matches "no login, no approval process" for public data.
+
+## New findings (verified 2026-07-06)
+
+1. **OASIS moved to `https://` in production, April 2025** — found in CAISO's own
+   "Readiness Notes: Upcoming Technology Updates for OASIS" (Rev. 03/18/25). The note
+   explicitly states *no core OASIS functionality changed* — only the URL protocol.
+   Every pipeline script still calls `http://oasis.caiso.com/...`, which works today only
+   because it 302-redirects to `https://`. Measured cost of that redirect: **0.71s vs
+   0.38s** per request — a real tax across a multi-hundred-request bid backfill. Fix:
+   switch the base URL to `https://` in `fetch_bids.py`, `fetch_lmp.py`, and the
+   `ATL_RESOURCE`/`ATL_PNODE` pulls.
+2. **The exact rate limit, from CAISO's own error response:** hammering the API returns
+   HTTP 429 with body `CAISO Acceptable Use Policy Violation. Please retry your request
+   after 5 seconds.` — not a guess, CAISO states the number. Current 5s spacing in
+   `fetch_bids.py` is already correct; `fetch_lmp.py` has no explicit pacing between its
+   monthly chunks beyond a flat `time.sleep(5)` and should get the same treatment
+   uniformly (see client design below).
+3. **"No data isn't always an error" — confirmed, and it's actually informative for us.**
+   Querying inside the 90-day embargo returns HTTP 200 with a 645-byte XML stub (an empty
+   `OASISReport`, no CSV file inside), not an error status. A naive `if status != 200`
+   check would misclassify this. Any client needs to check for an actual data file in the
+   zip, not just the HTTP status — and for Public Bid Data specifically, an empty result
+   *is* the embargo boundary, which is a useful signal (see incremental pull, below).
+4. **`gridstatus` does cover Public Bid Data — confirmed by actually running it**, not
+   just reading its source (which is as far as last session's research went):
+   `CAISO().get_oasis_dataset("public_bids", date="2025-07-01", params={"groupid":
+   "PUB_DAM_GRP"})` returns the identical 27-column schema our hand-rolled parser expects
+   (`RESOURCEBID_SEQ`, `SELFSCHEDMW`, `SCH_BID_XAXISDATA`, etc.), and it already
+   implements: per-dataset date-range chunking (31 days default, 1 day for
+   `public_bids` — matches the spec doc's stated caps exactly), retry-with-backoff, and
+   429-aware sleep. It still calls `http://` internally, so it doesn't fully close finding
+   #1 on its own.
+5. **`ATL_RESOURCE` is the correct target for "Master File / resource listing."** CAISO's
+   Master File is the authoritative internal database; `ATL_RESOURCE` is the OASIS report
+   that exposes it (confirmed via CAISO's own Master File documentation). No separate
+   "master file" report identifier is being missed.
+6. Minor: `fetch_lmp.py` chunks LMP requests at 28 days out of caution. The verified cap
+   is 31 days (both the spec doc and `gridstatus`'s default agree) — widening it cuts
+   request count by roughly 10% on multi-month pulls. Low priority, easy fix.
+
+## Gaps to close
+
+1. **Centralize OASIS access into one client** (`pipeline/oasis_client.py`), replacing
+   the duplicated request/retry/unzip logic in `fetch_bids.py`, `fetch_lmp.py`, and
+   `build_plants.py`'s `ATL_RESOURCE` pull. Responsibilities: `https://` base URL; 5s
+   inter-request pacing; retry-with-backoff on 429 (reuse `gridstatus`'s pattern —
+   sleep, escalate, cap retries); detect an empty-report response (small XML, no embedded
+   data file) and return "no data" distinctly from raising; per-report date-range
+   chunking so callers pass any range and get correctly-sized sub-requests automatically.
+   **Recommendation: build this as a thin wrapper around `gridstatus.CAISO()`** for LMP,
+   resource listing (`ATL_RESOURCE`), and Public Bid Data — it already does most of the
+   above and is now live-verified to return the right shape for bids. Keep our own
+   reduction/classification logic (`reduce_day`, `classify_hour`) unchanged; only the
+   transport layer changes. This directly addresses the spec's "report identifiers/
+   versions aren't stable long-term" risk by delegating that tracking to an
+   actively-maintained OSS project instead of hardcoding versions ourselves.
+2. **Identity resolution as a cached, confidence-tagged artifact**, not a same-run
+   heuristic. `build_plants.py` currently guesses `resource_ids` per plant via a prefix
+   match against `ATL_RESOURCE` — approximate, and not the same lookup actually used to
+   fetch Ormond's/Alamitos's LMP in M2 (those node IDs were found by hand-grepping the
+   CSV). Plan: a dedicated `pipeline/resolve_resources.py` that joins EIA-860's "RTO/ISO
+   LMP Node Designation" column against `ATL_RESOURCE`, tags each match
+   `exact` / `prefix-heuristic` / `manual`, and writes
+   `data/processed/resource_map.json` once (spec: "one-time, or infrequently-refreshed,
+   not something to redo on every pull"). `build_plants.py` and the fingerprint/LMP
+   scripts all read this file instead of resolving independently. Manual overrides (like
+   the two Ormond node IDs and the Alamitos CC node) get recorded here explicitly rather
+   than living only in shell history.
+3. **Incremental daily pull**, entirely unbuilt today (M2 was a one-shot backfill).
+   Design: `pipeline/daily_pull.py` + a watermark file
+   `data/processed/_watermark.json` (`{"bids_dam": "2025-09-30", ...}`). Each run computes
+   `today - 90 days` as the newly-eligible day and pulls every day from
+   `watermark + 1` through it.
+   **Recommendation on the spec's open question (catch-up vs. accept-gaps): catch up
+   automatically, uncapped.** Public Bid Data is retained by CAISO indefinitely and a
+   day's pull is idempotent and cheap (~14MB, one request), so there's no real cost to
+   backfilling a missed stretch, and silently accepting gaps would quietly corrupt the
+   "how often did it miss" statistic the whole analysis is for. Emit a warning (not a
+   failure) if the catch-up exceeds some large N (e.g. 30 days), since that likely means
+   the schedule itself broke rather than one missed run.
+4. **Scheduling.** The repo now deploys the map to Vercel (static hosting — not a fit for
+   a Python cron job). Recommend a **GitHub Actions scheduled workflow** (daily cron) that
+   runs `daily_pull.py` and commits the new parquet + regenerated `plants.json` back to
+   `main`, which also naturally triggers a Vercel redeploy. Tradeoffs to flag: needs a
+   token with repo-write scope (a default `GITHUB_TOKEN` in Actions is sufficient for
+   same-repo commits — no new secret to manage); committing daily data files will grow
+   repo history over time (acceptable at ~14MB/day of reduced parquet; revisit if this
+   becomes a problem, e.g. by moving processed data to a release asset instead of git).
+5. **Observability.** `daily_pull.py` should log one line per day attempted with outcome
+   (`ok` / `empty` / `error`) and row count, so a run of "empty" results reads as "not
+   published yet" rather than silent failure — directly using finding #3 above.
+
+## Sequencing (continues M1–M4 above)
+
+- **M5 — Client consolidation:** build `oasis_client.py` on `gridstatus`, migrate
+  `fetch_bids.py`/`fetch_lmp.py`/`build_plants.py` to use it, switch to `https://`, widen
+  LMP chunking to 31 days. Pure refactor — `pipeline/tests/` (13 tests) should pass
+  unchanged since output schemas don't change; add a test asserting the client rejects a
+  request naively on an empty-report response versus raising.
+- **M6 — Resource resolution artifact:** `resolve_resources.py` +
+  `data/processed/resource_map.json`, with Ormond/Alamitos's already-known-good node IDs
+  encoded as the first manual overrides. `build_plants.py` reads from it instead of
+  guessing inline.
+- **M7 — Incremental pull:** `daily_pull.py` + watermark file + GitHub Actions workflow.
+  Depends on M5 (needs the hardened client) and M6 (needs resource resolution to know
+  which nodes/resources to pull LMP for beyond the two already validated).
+
+## Open items
+
+1. Confirm GitHub Actions is an acceptable place to run scheduled jobs for this project
+   (vs. e.g. a personal machine cron, which is simpler to start but doesn't run if a
+   laptop is closed).
+2. Decide the retention/growth strategy for daily-committed parquet once M7 has been
+   running a while (git history growth vs. release-asset storage) — not urgent, revisit
+   after a few weeks of real data volume.

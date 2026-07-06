@@ -1,7 +1,8 @@
 """Backfill CAISO DAM Public Bid Data (90-day delayed) into reduced daily parquet.
 
-Raw zips cached in data/raw/pub_bids_dam/, reduced energy-bid summaries written to
-data/processed/bids_dam/YYYY-MM-DD.parquet with one row per (resource seq, hour):
+Transport/pacing/empty-report handling live in oasis_client (PLAN.md M5); raw
+zips are cached in data/raw/pub_bids_dam/. Reduced energy-bid summaries go to
+data/processed/bids_dam/YYYY-MM-DD.parquet, one row per (resource seq, hour):
   seq, sc_seq, hour (local start), min_price, max_price, max_mw, ss_mw, n_pts
 
 Usage: python fetch_bids.py 2025-07-01 2025-09-30
@@ -9,38 +10,17 @@ Usage: python fetch_bids.py 2025-07-01 2025-09-30
 
 import io
 import sys
-import time
 import zipfile
 from datetime import date, timedelta
 from pathlib import Path
 
 import pandas as pd
-import requests
+
+from oasis_client import OasisClient
 
 ROOT = Path(__file__).resolve().parent.parent
 RAW = ROOT / "data" / "raw" / "pub_bids_dam"
 OUT = ROOT / "data" / "processed" / "bids_dam"
-URL = ("http://oasis.caiso.com/oasisapi/GroupZip?groupid=PUB_DAM_GRP"
-       "&startdatetime={d}T08:00-0000&version=3&resultformat=6")
-SLEEP_S = 5.0  # OASIS returns 429 below ~5s spacing
-
-
-def fetch_day(session: requests.Session, d: date) -> Path | None:
-    zpath = RAW / f"{d}.zip"
-    if zpath.exists() and zpath.stat().st_size > 10_000:
-        return zpath
-    for attempt in range(3):
-        try:
-            r = session.get(URL.format(d=d.strftime("%Y%m%d")), timeout=180)
-            if r.status_code == 200 and len(r.content) > 10_000:
-                zpath.write_bytes(r.content)
-                time.sleep(SLEEP_S)
-                return zpath
-            print(f"{d}: HTTP {r.status_code}, {len(r.content)}B (attempt {attempt+1})", flush=True)
-        except requests.RequestException as e:
-            print(f"{d}: {e} (attempt {attempt+1})", flush=True)
-        time.sleep(8 * (attempt + 1))
-    return None
 
 
 def reduce_day(zpath: Path, d: date) -> None:
@@ -65,27 +45,33 @@ def reduce_day(zpath: Path, d: date) -> None:
     g.to_parquet(opath, index=False)
 
 
+def pull_day(client: OasisClient, d: date) -> str:
+    """Fetch + reduce one trading day. Returns 'ok' | 'empty' | 'cached'."""
+    if (OUT / f"{d}.parquet").exists():
+        return "cached"
+    zpath = client.download_public_bids_zip(d, RAW)
+    if zpath is None:
+        return "empty"
+    reduce_day(zpath, d)
+    return "ok"
+
+
 def main(start: date, end: date):
-    RAW.mkdir(parents=True, exist_ok=True)
     OUT.mkdir(parents=True, exist_ok=True)
-    session = requests.Session()
-    n_ok = n_fail = 0
+    client = OasisClient()
+    counts = {"ok": 0, "empty": 0, "cached": 0, "error": 0}
     d = start
     while d <= end:
-        zpath = fetch_day(session, d)
-        if zpath:
-            try:
-                reduce_day(zpath, d)
-                n_ok += 1
-            except Exception as e:
-                print(f"{d}: reduce failed: {e}", flush=True)
-                n_fail += 1
-        else:
-            n_fail += 1
-        if (n_ok + n_fail) % 10 == 0:
-            print(f"progress: {n_ok} ok, {n_fail} failed, at {d}", flush=True)
+        try:
+            status = pull_day(client, d)
+        except Exception as e:
+            status = "error"
+            print(f"{d}: error: {e}", flush=True)
+        counts[status] += 1
+        if status in ("empty", "error") or sum(counts.values()) % 10 == 0:
+            print(f"{d}: {status}  (totals {counts})", flush=True)
         d += timedelta(days=1)
-    print(f"done: {n_ok} ok, {n_fail} failed", flush=True)
+    print(f"done: {counts}", flush=True)
 
 
 if __name__ == "__main__":
