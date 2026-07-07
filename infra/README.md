@@ -29,30 +29,42 @@ python pipeline/s3_sync.py push     # upload local bulk data to S3
 
 If `POWER_DATA_BUCKET` is unset, the whole pipeline runs local-only (dev/tests).
 
-## CI credential (action required — see repo owner)
+## CI credential (action required — needs an IAM admin)
 
 The scheduled `daily-oasis-pull` workflow needs an AWS credential, supplied as **GitHub
 encrypted secrets** (never committed):
 
-- `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` — repo secrets
-- `POWER_DATA_BUCKET` — repo variable (already set to the bucket name; not sensitive)
+- `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` — repo secrets (to be set — see below)
+- `POWER_DATA_BUCKET` — repo variable, **already set** to the bucket name (not sensitive)
 
-**Recommended:** create a dedicated least-privilege CI user rather than using a personal
-key. With an admin credential configured locally:
+**Recommended: a dedicated least-privilege CI user, not a personal key.** The key used to
+create the bucket (`c.radcliffe`) has S3 access but no IAM permissions, so this must be run
+by someone with IAM admin on account `507024406243`:
 
 ```bash
+# 1. create the scoped user (S3 read/write on this one bucket, nothing else)
 aws iam create-user --user-name power-visual-ci
 aws iam put-user-policy --user-name power-visual-ci \
   --policy-name s3-bucket-access --policy-document file://infra/s3-bucket-policy.json
-aws iam create-access-key --user-name power-visual-ci   # -> put these in GitHub secrets
+
+# 2. mint a key and push it straight into GitHub secrets — the secret is piped from
+#    aws into gh via stdin, so it never appears on a command line, in the shell
+#    history, or on screen. Run from the repo root.
+CREDS=$(aws iam create-access-key --user-name power-visual-ci --output json)
+printf '%s' "$CREDS" | jq -r '.AccessKey.AccessKeyId' \
+  | gh secret set AWS_ACCESS_KEY_ID --repo CatAuditor/power
+printf '%s' "$CREDS" | jq -r '.AccessKey.SecretAccessKey' \
+  | gh secret set AWS_SECRET_ACCESS_KEY --repo CatAuditor/power
+unset CREDS
+
+# 3. verify (names only; values stay encrypted) and smoke-test the workflow
+gh secret list --repo CatAuditor/power
+gh workflow run daily-oasis-pull --repo CatAuditor/power
 ```
 
-Then set the secrets (values read from stdin so they never hit the shell history):
+`infra/s3-bucket-policy.json` scopes that user to read/write objects in this one bucket and
+nothing else. If it ever leaks, it can touch only this bucket.
 
-```bash
-gh secret set AWS_ACCESS_KEY_ID   --repo CatAuditor/power   # paste when prompted
-gh secret set AWS_SECRET_ACCESS_KEY --repo CatAuditor/power  # paste when prompted
-```
-
-`infra/s3-bucket-policy.json` scopes that user to read/write objects in this one bucket
-and nothing else.
+**Fallback (quicker, less ideal):** reuse the `c.radcliffe` key already in `~/.aws`. It
+works for S3, but it's a personal key with broader scope. Same step 2/3 as above, minus the
+`create-*` calls — pipe the existing values from `aws configure get` into `gh secret set`.
